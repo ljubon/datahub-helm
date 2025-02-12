@@ -7,13 +7,19 @@ replicaCount: 1
 revisionHistoryLimit: 10
 
 image:
-  repository: linkedin/datahub-frontend-react
-  tag: "head"
+  repository: acryldata/datahub-frontend-react
+  tag:
   pullPolicy: IfNotPresent
+  # Override the image's command & args with a new one.
+  # This may be necessary for custom startup or shutdown behaviors
+  command:
+  args:
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
+
+terminationGracePeriodSeconds: 150
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -38,19 +44,24 @@ securityContext: {}
   # runAsNonRoot: true
   # runAsUser: 1000
 
+priorityClassName:
+
 service:
   type: LoadBalancer # ClusterIP or NodePort
   port: 9002
   targetPort: http
+  containerPort: 9002
   protocol: TCP
   name: http
   # Annotations to add to the service, this will help in adding
   # Internal load balancer or various other annotation support in AWS
   annotations: {}
     # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  extraLabels: {}
 
 serviceMonitor:
   create: false
+  extraLabels: {}
 
 ingress:
   # className: ""
@@ -67,11 +78,15 @@ ingress:
   #  - secretName: chart-example-tls
   #    hosts:
   #      - chart-example.local
+  pathType: ImplementationSpecific
 
+auth:
+  sessionTTLHours: "24"
 # OIDC auth based on https://datahubproject.io/docs/authentication/guides/sso/configure-oidc-react
 oidcAuthentication:
   enabled: false
   # provider: google/okta/azure  <- choose only one
+
   # clientId: your-client-id
   # clientSecret: your-client-secret
   # only needed if you would like to store the client secret in secret
@@ -81,15 +96,30 @@ oidcAuthentication:
   # only needed if provider is `okta`
   # oktaDomain: your-okta-domain.com
 
-  # only neede if provider is `azure`
+  # only needed if provider is `azure`
   # azureTenantId: your-azure-tenant-id
+  # if needed, it should set meaningful defaults from provider
+  # scope: "openid profile email"
+
+  # The attribute that will contain the username used on the DataHub platform.
+  # user_name_claim: "email"
+  # A regex string used for extracting the username from the userNameClaim attribute.
+  # user_name_claim_regex: "([^@]+)"
+
+# Extra labels for Deployment
+extraLabels: {}
+  # owner: myteam
+  # environment: test
+
+# Extra labels for the Pods
+extraPodLabels: {}
 
 # Extra environment variables
 # This will be appended to the current 'env:' key. You can use any of the kubernetes env
 # syntax here
 extraEnvs: []
   # - name: MY_ENVIRONMENT_VAR
- #   value: the_value_goes_here
+  #   value: the_value_goes_here
 
 extraVolumes: []
   # - name: extras
@@ -102,7 +132,13 @@ extraVolumeMounts: []
 
 extraInitContainers: []
 
-lifecycle:
+# Add extra sidecar containers to deployment pod
+extraSidecars: []
+  # - name: my-image-name
+  #   image: my-image
+  #   imagePullPolicy: Always
+
+lifecycle: {}
   # To add a new user to datahub in JAAS config without mounting the user.props file
   # postStart:
   #   exec:
@@ -114,63 +150,17 @@ resources: {}
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
   # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
+  #   cpu: 500m
+  #   memory: 2Gi
   # requests:
   #   cpu: 100m
-  #   memory: 128Mi
+  #   memory: 1Gi
 
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
-
-env:
-  JMXPORT: 1099
-
-exporters:
-  jmx:
-    enabled: false
-#    image:
-#      repository: bitnami/jmx-exporter
-#      tag: 0.15.0
-#      pullPolicy: IfNotPresent
-#    config:
-#      lowercaseOutputName: true
-#      lowercaseOutputLabelNames: true
-#      rules:
-#        - pattern: ".*"
-#      startDelaySeconds: 30
-#    env: {}
-#    resources: {}
-#    path: /metrics
-#    ports:
-#      jmxxp:
-#        containerPort: 5556
-#        protocol: TCP
-#    livenessProbe:
-#      httpGet:
-#        path: /metrics
-#        port: jmxxp
-#      initialDelaySeconds: 30
-#      periodSeconds: 15
-#      timeoutSeconds: 60
-#      failureThreshold: 8
-#      successThreshold: 1
-#    readinessProbe:
-#      httpGet:
-#        path: /metrics
-#        port: jmxxp
-#      initialDelaySeconds: 30
-#      periodSeconds: 15
-#      timeoutSeconds: 60
-#      failureThreshold: 8
-#      successThreshold: 1
-#    serviceMonitor:
-#      interval: 30s
-#      scrapeTimeout: 30s
-#      scheme: http
 
 livenessProbe:
   initialDelaySeconds: 60
@@ -188,6 +178,8 @@ datahub:
       buffer:
         size: "10MB"
 global:
+  imageRegistry: "docker.io"
+
   datahub_analytics_enabled: true
 
   elasticsearch:
@@ -199,11 +191,17 @@ global:
       server: "broker:9092"
 
   datahub:
+    version: head
     gms:
       port: "8080"
+    monitoring:
+      enablePrometheus: true
+      portName: "jmx"
     appVersion: "1.0"
+    frontend:
+      validateSignUpEmail: true
     metadata_service_authentication:
-      enabled: false
+      enabled: true
       systemClientId: "__datahub_system"
       # systemClientSecret:
       #  secretRef: <secret-ref>

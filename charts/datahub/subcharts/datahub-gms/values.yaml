@@ -4,16 +4,31 @@
 
 replicaCount: 1
 
+hpa:
+  # Can only be enabled if global.datahub_standalone_consumers_enabled
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  behavior: {}
+  targetCPUUtilizationPercentage: 100
+  targetMemoryUtilizationPercentage:
+
 revisionHistoryLimit: 10
 
 image:
-  repository: linkedin/datahub-gms
+  repository: acryldata/datahub-gms
   pullPolicy: IfNotPresent
-  tag: head
+  tag:
+  # Override the image's command & args with a new one.
+  # This may be necessary for custom startup or shutdown behaviors
+  command:
+  args:
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
+
+terminationGracePeriodSeconds: 150
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -26,7 +41,7 @@ serviceAccount:
 
 serviceMonitor:
   create: false
-
+  extraLabels: {}
 
 podAnnotations: {}
   # co.elastic.logs/enabled: "true"
@@ -41,6 +56,8 @@ securityContext: {}
   # readOnlyRootFilesystem: true
   # runAsNonRoot: true
   # runAsUser: 1000
+
+priorityClassName:
 
 service:
   type: LoadBalancer # ClusterIP or NodePort
@@ -68,6 +85,15 @@ ingress:
   #  - secretName: chart-example-tls
   #    hosts:
   #      - chart-example.local
+  pathType: ImplementationSpecific
+
+# Extra labels for Deployment
+extraLabels: {}
+  # owner: myteam
+  # environment: test
+
+# Extra labels for the Pods
+extraPodLabels: {}
 
 # Extra environment variables
 # This will be appended to the current 'env:' key. You can use any of the kubernetes env
@@ -86,6 +112,12 @@ extraVolumeMounts: []
   #   readOnly: true
 
 extraInitContainers: []
+
+# Add extra sidecar containers to deployment pod
+extraSidecars: []
+  # - name: my-image-name
+  #   image: my-image
+  #   imagePullPolicy: Always
 
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
@@ -118,19 +150,46 @@ readinessProbe:
 #This section is useful if we are installing this chart separately for testing
 # helm install datahub-gms datahub-gms/
 global:
+  imageRegistry: "docker.io"
+
   datahub_analytics_enabled: true
-  graph_service_impl: neo4j
+  graph_service_impl: elasticsearch
 
   elasticsearch:
     host: "elasticsearch"
     port: "9200"
     skipcheck: "false"
+    index:
+      enableMappingsReindex: true
+    search:
+      maxTermBucketSize: 20
+      exactMatch:
+        exclusive: false
+        withPrefix: true
+        exactFactor: 2.0
+        prefixFactor: 1.6
+        caseSensitivityFactor: 0.7
+        enableStructured: true
+      graph:
+        timeoutSeconds: 50
+        batchSize: 1000
+        maxResult: 10000
 
   kafka:
     bootstrap:
       server: "broker:9092"
     schemaregistry:
-      url: "http://schema-registry:8081"
+      # GMS Implementation - `url` configured based on component context
+      type: INTERNAL
+      # Confluent Kafka Implementation
+      # type: KAFKA
+      # url: "http://schema-registry:8081"
+    ## Kafka producer and consumer settings
+    #producer:
+    #  compressionType: snappy
+    #  maxRequestSize: "5242880"
+    #consumer:
+    #  maxPartitionFetchBytes: "5242880"
 
   neo4j:
     host: "neo4j:7474"
@@ -151,19 +210,29 @@ global:
         secretKey: "mysql-password"
 
   datahub:
+    version: head
     monitoring:
       enablePrometheus: false
       enableJMXPort: false
+      portName: jmx
     gms:
       port: "8080"
+      graphql:
+        introspection:
+          enabled: 'true' # v0.13.3+
     appVersion: "1.0"
+
+    systemUpdate:
+      ## The following options control settings for datahub-upgrade job which will
+      ## managed ES indices and other update related work
+      enabled: true
 
     managed_ingestion:
       enabled: true
       # defaultCliVersion: "X.X.X" --> Optional: Controls the acryl-datahub package version downloaded from PyPI.
 
     metadata_service_authentication:
-      enabled: false
+      enabled: true
       # tokenService:
       #   signingKey:
       #    secretRef: <secret-ref>
@@ -175,6 +244,18 @@ global:
       # systemClientSecret:
       #  secretRef: <secret-ref>
       #  secretKey: <secret-key>
+      restApi:
+        authorization:
+          # enables authorization of reads, writes, and deletes on REST APIs
+          enabled: true
+      view:
+        authorization:
+          # search/view authorization filters
+          enabled: false
+          # recommendation settings when search/view authorization is in effect
+          recommendations:
+            # whether to restrict Most Popular entities 
+            peerGroupEnabled: true
 
     encryptionKey:
       secretRef: "encryption-key-secret"
@@ -182,7 +263,38 @@ global:
 
     enable_retention: false ## Set to true to enable retention on local DB
 
-    enable_search_cache: false
+    ## Enables always emitting a MCL even when no changes are detected. Used for Time Based Lineage when no changes occur.
+    alwaysEmitChangeLog: false
+
+    ## Enables diff mode for graph writes, uses a different code path that produces a diff from previous to next to write relationships instead of wholesale deleting edges and reading
+    enableGraphDiffMode: true
+
+    ## Enable stricter URN validation logic
+    strictUrnValidation: false
+
+    cache:
+      search:
+        ## Enable general search caching
+        enabled: false
+        ## Configuration for the primary cahe
+        primary:
+          ttlSeconds: 600
+          maxSize: 10000
+        ## Configuration for homepage cache
+        homepage:
+          entityCounts:
+            ttlSeconds: 600
+        ## Lineage specific caching options
+        lineage:
+          ## Enables in-memory cache for searchAcrossLineage query
+          enabled: false
+          ttlSeconds: 86400
+          lightningThreshold: 300
+
+    metadataChangeProposal:
+      consumer:
+        batch:
+          enabled: false
 
   hostAliases:
     - ip: "192.168.0.104"

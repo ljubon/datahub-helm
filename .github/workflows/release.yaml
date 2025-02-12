@@ -1,5 +1,3 @@
-
-
 name: Release Charts
 
 on:
@@ -14,9 +12,12 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Fetch history
         run: git fetch --prune --unshallow
@@ -26,15 +27,14 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
       - name: Install Helm
-        uses: azure/setup-helm@v1
+        uses: azure/setup-helm@v4
         with:
           version: v3.4.0
 
       - name: Add Helm repos
         run: |
           helm repo add elasticsearch https://helm.elastic.co
-          helm repo add neo4j https://neo4j-contrib.github.io/neo4j-helm
-          helm repo add neo4j-community https://equinor.github.io/helm-charts/charts
+          helm repo add neo4j https://helm.neo4j.com/neo4j
           helm repo add mysql https://charts.bitnami.com/bitnami
           helm repo add cp-helm-charts https://confluentinc.github.io/cp-helm-charts
           helm repo add kafka https://charts.bitnami.com/bitnami

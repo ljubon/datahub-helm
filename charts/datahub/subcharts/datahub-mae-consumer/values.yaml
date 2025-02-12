@@ -7,13 +7,19 @@ replicaCount: 1
 revisionHistoryLimit: 10
 
 image:
-  repository: linkedin/datahub-mae-consumer
+  repository: acryldata/datahub-mae-consumer
   pullPolicy: IfNotPresent
-  tag: head
+  tag:
+  # Override the image's command & args with a new one.
+  # This may be necessary for custom startup or shutdown behaviors
+  command:
+  args:
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
+
+terminationGracePeriodSeconds: 150
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -26,6 +32,7 @@ serviceAccount:
 
 serviceMonitor:
   create: false
+  extraLabels: {}
 
 podAnnotations: {}
   # co.elastic.logs/enabled: "true"
@@ -40,6 +47,8 @@ securityContext: {}
   # readOnlyRootFilesystem: true
   # runAsNonRoot: true
   # runAsUser: 1000
+
+priorityClassName:
 
 service:
   type: ClusterIP # NodePort
@@ -61,6 +70,14 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
+# Extra labels for Deployment
+extraLabels: {}
+  # owner: myteam
+  # environment: test
+
+# Extra labels for the Pods
+extraPodLabels: {}
+
 # Extra environment variables
 # This will be appended to the current 'env:' key. You can use any of the kubernetes env
 # syntax here
@@ -78,6 +95,12 @@ extraVolumeMounts: []
   #   readOnly: true
 
 extraInitContainers: []
+
+# Add extra sidecar containers to deployment pod
+extraSidecars: []
+  # - name: my-image-name
+  #   image: my-image
+  #   imagePullPolicy: Always
 
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
@@ -97,51 +120,6 @@ tolerations: []
 
 affinity: {}
 
-env:
-  JMXPORT: 1099
-
-exporters:
-  jmx:
-    enabled: false
-#    image:
-#      repository: bitnami/jmx-exporter
-#      tag: 0.15.0
-#      pullPolicy: IfNotPresent
-#    config:
-#      lowercaseOutputName: true
-#      rules:
-#        - pattern: ".*"
-#      startDelaySeconds: 30
-#    env: {}
-#    resources: {}
-#    path: /metrics
-#    ports:
-#      jmxxp:
-#        containerPort: 5556
-#        protocol: TCP
-#    livenessProbe:
-#      httpGet:
-#        path: /metrics
-#        port: jmxxp
-#      initialDelaySeconds: 30
-#      periodSeconds: 15
-#      timeoutSeconds: 60
-#      failureThreshold: 8
-#      successThreshold: 1
-#    readinessProbe:
-#      httpGet:
-#        path: /metrics
-#        port: jmxxp
-#      initialDelaySeconds: 30
-#      periodSeconds: 15
-#      timeoutSeconds: 60
-#      failureThreshold: 8
-#      successThreshold: 1
-#    serviceMonitor:
-#      interval: 30s
-#      scrapeTimeout: 30s
-#      scheme: http
-
 livenessProbe:
   initialDelaySeconds: 60
   periodSeconds: 30
@@ -153,7 +131,9 @@ readinessProbe:
   failureThreshold: 8
 
 global:
-  graph_service_impl: neo4j
+  imageRegistry: "docker.io"
+
+  graph_service_impl: elasticsearch
   datahub_analytics_enabled: true
 
   elasticsearch:
@@ -166,6 +146,12 @@ global:
       server: "broker:9092"
     schemaregistry:
       url: "http://schema-registry:8081"
+    ## Kafka producer and consumer settings
+    #producer:
+    #  compressionType: snappy
+    #  maxRequestSize: 5242880
+    #consumer:
+    #  maxPartitionFetchBytes: 5242880
 
   neo4j:
     host: "neo4j:7474"
@@ -176,18 +162,36 @@ global:
       secretKey: "neo4j-password"
 
   datahub:
+    version: head
+    gms:
+      port: "8080"
     monitoring:
       enablePrometheus: false
+      portName: jmx
+
+    systemUpdate:
+      ## The following options control settings for datahub-upgrade job which will
+      ## managed ES indices and other update related work
+      enabled: true
 
     mae_consumer:
       port: "9091"
 
+    managed_ingestion:
+      enabled: true
+
     metadata_service_authentication:
-      enabled: false
+      enabled: true
       systemClientId: "__datahub_system"
       # systemClientSecret:
       #  secretRef: <secret-ref>
       #  secretKey: <secret-key>
+
+    ## Enables always emitting a MCL even when no changes are detected. Used for Time Based Lineage when no changes occur.
+    alwaysEmitChangeLog: false
+
+    ## Enables diff mode for graph writes, uses a different code path that produces a diff from previous to next to write relationships instead of wholesale deleting edges and reading
+    enableGraphDiffMode: true
 
   hostAliases:
     - ip: "192.168.0.104"

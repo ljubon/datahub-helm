@@ -4,6 +4,9 @@ metadata:
   name: {{ include "acryl-datahub-actions.fullname" . }}
   labels:
     {{- include "acryl-datahub-actions.labels" . | nindent 4 }}
+    {{- range $key, $val := .Values.extraLabels }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -13,6 +16,8 @@ spec:
     metadata:
     {{- with .Values.podAnnotations }}
       annotations:
+        # Ensures resource is only deployed at GMS is deployed, since there is a dependency on GMS being up.
+        "helm.sh/hook-weight": "1"
         {{- toYaml . | nindent 8 }}
     {{- end }}
       labels:
@@ -20,7 +25,11 @@ spec:
         {{- range $key, $value := .Values.global.podLabels }}
         {{ $key }}: {{ $value | quote }}
         {{- end }}
+        {{- range $key, $value := .Values.extraPodLabels }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
     spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
     {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -38,11 +47,14 @@ spec:
       {{- with .Values.ingestionSecretFiles }}
         - name: ingestion-secret-files
           secret:
-            defaultMode: 0444
+            defaultMode: {{ .defaultMode }}
             secretName: {{ .name }}
       {{- end }}
       {{- if .Values.extraVolumes }}
         {{ toYaml .Values.extraVolumes | nindent 8 }}
+      {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: "{{ .Values.priorityClassName }}"
       {{- end }}
       initContainers:
       {{- if .Values.extraInitContainers }}
@@ -52,26 +64,47 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "datahub.image" (dict "imageRegistry" .Values.global.imageRegistry "version" .Values.global.datahub.version "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 9093
               protocol: TCP
+          {{- if .Values.image.command }}
+          command: {{ .Values.image.command | toRawJson }}
+          {{- end }}
+          {{- if .Values.image.args }}
+          args: {{ .Values.image.args | toRawJson }}
+          {{- end }}
           env:
+            - name: DATAHUB_GMS_PROTOCOL
+              value: {{ include "acryl-datahub-actions.datahubGmsProtocol" . }}
             - name: DATAHUB_GMS_HOST
-              value: {{ printf "%s-%s" .Release.Name "datahub-gms" }}
+              value: {{ include "acryl-datahub-actions.datahubGmsHost" . }}
             - name: DATAHUB_GMS_PORT
-              value: "{{ .Values.global.datahub.gms.port }}"
+              value: {{ include "acryl-datahub-actions.datahubGmsPort" . | quote }}
             # Deprecated in favour of DATAHUB_* variables
             - name: GMS_HOST
               value: {{ printf "%s-%s" .Release.Name "datahub-gms" }}
             - name: GMS_PORT
               value: "{{ .Values.global.datahub.gms.port }}"
+            {{- if .Values.actions.executorId }}
+            - name: EXECUTOR_ID
+              value: "{{ .Values.actions.executorId }}"
+            {{- end }}
+            {{- if .Values.debug.enabled }}
+            - name: DATAHUB_DEBUG
+              value: "true"
+            {{- end }}
             - name: KAFKA_BOOTSTRAP_SERVER
               value: "{{ .Values.global.kafka.bootstrap.server }}"
+            {{- if eq .Values.global.kafka.schemaregistry.type "INTERNAL" }}
+            - name: SCHEMA_REGISTRY_URL
+              value: {{ printf "%s://%s:%s/schema-registry/api/" (include "acryl-datahub-actions.datahubGmsProtocol" .) (include "acryl-datahub-actions.datahubGmsHost" .) (include "acryl-datahub-actions.datahubGmsPort" .) | quote }}
+            {{- else if eq .Values.global.kafka.schemaregistry.type "KAFKA" }}
             - name: SCHEMA_REGISTRY_URL
               value: "{{ .Values.global.kafka.schemaregistry.url }}"
+            {{- end }}
             - name: KAFKA_AUTO_OFFSET_POLICY
               value: "{{ .Values.actions.kafkaAutoOffsetPolicy }}"
             {{- if .Values.global.springKafkaConfigurationOverrides }}
@@ -89,6 +122,34 @@ spec:
                   key: {{ $envVarValue }}
             {{- end }}
             {{- end }}
+            {{- with .Values.global.kafka.topics }}
+            - name: METADATA_CHANGE_EVENT_NAME
+              value: {{ .metadata_change_event_name }}
+            - name: FAILED_METADATA_CHANGE_EVENT_NAME
+              value: {{ .failed_metadata_change_event_name }}
+            - name: METADATA_AUDIT_EVENT_NAME
+              value: {{ .metadata_audit_event_name }}
+            - name: DATAHUB_USAGE_EVENT_NAME
+              value: {{ .datahub_usage_event_name }}
+            - name: METADATA_CHANGE_PROPOSAL_TOPIC_NAME
+              value: {{ .metadata_change_proposal_topic_name }}
+            - name: FAILED_METADATA_CHANGE_PROPOSAL_TOPIC_NAME
+              value: {{ .failed_metadata_change_proposal_topic_name }}
+            - name: METADATA_CHANGE_LOG_VERSIONED_TOPIC_NAME
+              value: {{ .metadata_change_log_versioned_topic_name }}
+            - name: METADATA_CHANGE_LOG_TIMESERIES_TOPIC_NAME
+              value: {{ .metadata_change_log_timeseries_topic_name }}
+            - name: PLATFORM_EVENT_TOPIC_NAME
+              value: {{ .platform_event_topic_name }}
+            {{- end }}
+            {{- with .Values.global.kafka.consumer_groups }}
+            - name: DATAHUB_ACTIONS_INGESTION_EXECUTOR_CONSUMER_GROUP_ID
+              value: {{ .datahub_actions_ingestion_executor_consumer_group_id }}
+            - name: DATAHUB_ACTIONS_SLACK_CONSUMER_GROUP_ID
+              value: {{ .datahub_actions_slack_consumer_group_id }}
+            - name: DATAHUB_ACTIONS_TEAMS_CONSUMER_GROUP_ID
+              value: {{ .datahub_actions_teams_consumer_group_id }}
+            {{- end }}
             {{- if .Values.global.datahub.metadata_service_authentication.enabled }}
             - name: DATAHUB_SYSTEM_CLIENT_ID
               value: {{ .Values.global.datahub.metadata_service_authentication.systemClientId }}
@@ -98,7 +159,7 @@ spec:
                   name: {{ .Values.global.datahub.metadata_service_authentication.systemClientSecret.secretRef }}
                   key: {{ .Values.global.datahub.metadata_service_authentication.systemClientSecret.secretKey }}
             {{- end }}
-           {{- if .Values.extraEnvs }}
+          {{- if .Values.extraEnvs }}
             {{ toYaml .Values.extraEnvs | nindent 12 }}
           {{- end }}
           volumeMounts:
@@ -116,8 +177,10 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-
-      {{- with .Values.nodeSelector }}
+        {{- with .Values.extraSidecars }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with default .Values.global.nodeSelector .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -125,7 +188,7 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
     {{- end }}
-    {{- with .Values.tolerations }}
+    {{- with default .Values.global.tolerations .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
     {{- end }}

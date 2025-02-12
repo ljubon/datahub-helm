@@ -8,14 +8,19 @@ metadata:
   name: "{{ $baseName }}-{{ $jobName }}"
   labels: {{- $labels | nindent 4 }}
 spec:
-  schedule: {{ default "0 0 * * *" .schedule | quote}}
+  schedule: {{ default "0 0 * * *" .schedule | quote }}
+  concurrencyPolicy: {{ default "Allow" .concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ default 3 .successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ default 1 .failedJobsHistoryLimit }}
+  suspend: {{ default false .suspend }}
   jobTemplate:
     spec:
-      template:        
+      backoffLimit: {{ default 6 $val.backoffLimit }}
+      template:
         {{- with $val.podAnnotations }}
         metadata:
           annotations:
-            {{- toYaml . | nindent 12 }}    
+            {{- toYaml . | nindent 12 }}
         {{- end }}
         spec:
         {{- with $.Values.imagePullSecrets }}
@@ -27,14 +32,17 @@ spec:
           {{- toYaml .extraInitContainers | nindent 12 }}
           {{- end }}
         {{- if .hostAliases }}
-          hostAliases: {{- include "common.tplvalues.render" (dict "value" .hostAliases "context" $) | nindent 10 }}
+          hostAliases:
+          {{- toYaml .hostAliases | nindent 12 }}
         {{- end }}
         {{- if .serviceAccountName }}
           serviceAccountName: {{ .serviceAccountName }}
         {{- end }}
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
           containers:
           - name: {{ $jobName }}-crawler
-            image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+            image: {{ include "datahub.image" (dict "imageRegistry" $.Values.global.imageRegistry "version" $.Values.global.datahub.version "image" $.Values.image) }}
             imagePullPolicy: {{ $.Values.image.pullPolicy }}
             volumeMounts:
               - name: recipe
@@ -42,24 +50,43 @@ spec:
             {{- if .extraVolumeMounts }}
               {{- toYaml .extraVolumeMounts | nindent 14 }}
             {{- end }}
-            command: ["/bin/sh", "-c", {{ default $defaultCommand .command }} ]
+            command: ["/bin/sh", "-c", {{ default $defaultCommand .command }}]
+            {{- if .securityContext }}
+            securityContext:
+              {{- toYaml .securityContext | nindent 14 }}
+            {{- end }}
             env:
               {{- if .env }}
               {{- range $key,$value := .env }}
-              - name: {{ $key | quote}}
-                value: {{ $value | quote}}
+              - name: {{ $key | quote }}
+                value: {{ $value | quote }}
               {{- end }}
               {{- end }}
               {{- if .envFromSecrets }}
               {{- range $key,$value := .envFromSecrets }}
-              - name: {{ $key | quote}}
+              - name: {{ $key | quote }}
                 valueFrom:
                   secretKeyRef:
-                    name: {{ $value.secret | quote}}
-                    key: {{ $value.key | quote}}
+                    name: {{ $value.secret | quote }}
+                    key: {{ $value.key | quote }}
               {{- end }}
               {{- end }}
-          restartPolicy: OnFailure
+            {{- if .extraSidecars }}
+              {{- toYaml .extraSidecars | nindent 10 }}
+            {{- end }}
+          restartPolicy: {{ default "OnFailure" .restartPolicy }}
+          {{- with default $.Values.global.nodeSelector .nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .affinity }}
+          affinity:
+            {{- toYaml .affinity | nindent 12 }}
+          {{- end }}
+          {{- with default $.Values.global.tolerations .tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumes:
             - name: recipe
               configMap:
